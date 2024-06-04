@@ -1,4 +1,3 @@
-// server.js
 const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
@@ -45,18 +44,16 @@ app.get('/', (req, res) => {
     res.sendFile(__dirname + '/index.html');
 });
 
-
-  
-// Define a User representation for clarity
+// User representation for clarity
 const User = {
-    tableName: 'users', 
-    createUser: function(newUser, callback) {
+    tableName: 'users',
+    createUser: function (newUser, callback) {
         connection.query('INSERT INTO ' + this.tableName + ' SET ?', newUser, callback);
-    },  
-    getUserByEmail: function(email, callback) {
+    },
+    getUserByEmail: function (email, callback) {
         connection.query('SELECT * FROM ' + this.tableName + ' WHERE email = ?', email, callback);
     },
-    getUserByUsername: function(username, callback) {
+    getUserByUsername: function (username, callback) {
         connection.query('SELECT * FROM ' + this.tableName + ' WHERE username = ?', username, callback);
     }
 };
@@ -69,13 +66,23 @@ app.post('/register', [
 
     // Custom validation to check if email and username are unique
     check('email').custom(async (value) => {
-        const user = await User.getUserByEmail(value);
+        const user = await new Promise((resolve, reject) => {
+            User.getUserByEmail(value, (err, result) => {
+                if (err) reject(err);
+                resolve(result[0]);
+            });
+        });
         if (user) {
             throw new Error('Email already exists');
         }
     }),
     check('username').custom(async (value) => {
-        const user = await User.getUserByUsername(value);
+        const user = await new Promise((resolve, reject) => {
+            User.getUserByUsername(value, (err, result) => {
+                if (err) reject(err);
+                resolve(result[0]);
+            });
+        });
         if (user) {
             throw new Error('Username already exists');
         }
@@ -102,12 +109,12 @@ app.post('/register', [
     // Insert user into MySQL
     User.createUser(newUser, (error, results, fields) => {
         if (error) {
-          console.error('Error inserting user: ' + error.message);
-          return res.status(500).json({ error: error.message });
+            console.error('Error inserting user: ' + error.message);
+            return res.status(500).json({ error: error.message });
         }
         console.log('Inserted a new user with id ' + results.insertId);
         res.status(201).json(newUser);
-      });
+    });
 });
 
 // Login route
@@ -141,28 +148,59 @@ app.post('/logout', (req, res) => {
     res.send('Logout successful');
 });
 
-//Dashboard route
+// Dashboard route
 app.get('/dashboard', (req, res) => {
-    // Assuming you have middleware to handle user authentication and store user information in req.user
-    const userFullName = req.user.full_name;
-    res.render('dashboard', { fullName: userFullName });
+    if (!req.session.user) {
+        return res.redirect('/');
+    }
+    res.sendFile(__dirname + '/dashboard.html');
+});
+
+// Route to select a course
+app.post('/select-course', (req, res) => {
+    if (!req.session.user) {
+        return res.status(401).send('Unauthorized');
+    }
+    const userId = req.session.user.id;
+    const courseId = req.body.courseId;
+    connection.query('INSERT INTO user_courses (user_id, course_id) VALUES (?, ?)', [userId, courseId], (err, results) => {
+        if (err) {
+            console.error('Error selecting course: ' + err.message);
+            return res.status(500).json({ error: err.message });
+        }
+        res.status(200).send('Course selected successfully');
+    });
+});
+
+// Route to retrieve selected courses for the logged-in user
+app.get('/selected-courses', (req, res) => {
+    if (!req.session.user) {
+        return res.status(401).send('Unauthorized');
+    }
+    const userId = req.session.user.id;
+    connection.query('SELECT courses.* FROM courses JOIN user_courses ON courses.id = user_courses.course_id WHERE user_courses.user_id = ?', [userId], (err, results) => {
+        if (err) {
+            console.error('Error retrieving selected courses: ' + err.message);
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(results);
+    });
 });
 
 // Route to retrieve course content
 app.get('/course/:id', (req, res) => {
     const courseId = req.params.id;
-    const sql = 'SELECT * FROM courses WHERE id = ?';
-    db.query(sql, [courseId], (err, result) => {
-      if (err) {
-        throw err;
-      }
-      // Send course content as JSON response
-      res.json(result);
+    connection.query('SELECT * FROM courses WHERE id = ?', [courseId], (err, result) => {
+        if (err) {
+            throw err;
+        }
+        res.json(result);
     });
-  });
+});
 
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
+
